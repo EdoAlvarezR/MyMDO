@@ -14,7 +14,7 @@ function fad(fun, x)
     Nout = length(f)
 
     dfdx = zeros(Nout, Nin)
-    cfg = ForwardDiff.JacobianConfig{Nin}(x)  # TODO: revisit chunk size
+    cfg = ForwardDiff.JacobianConfig(nothing, x,  ForwardDiff.Chunk{Nin}())  # TODO: revisit chunk size
     ForwardDiff.jacobian!(dfdx, fun, x, cfg)
 
     # TODO: this wastes a funciton call but has convenience of not specifying Nout.
