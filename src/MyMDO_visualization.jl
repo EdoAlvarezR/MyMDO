@@ -24,7 +24,7 @@ end
 function plot_space(f, xmin,xmax, ymin,ymax, n;
                     Xs=nothing, xopt=nothing, x_i=1, y_i=2,
                     xlbl=L"x", ylbl=L"y", zlbl=L"f(x,y)",
-                    title_str="Objective function", ppltn=nothing)
+                    title_str="Objective function", ppltn=nothing, con=nothing)
   x = linspace(xmin, xmax, n)
   y = linspace(ymin, ymax, n)
 
@@ -36,6 +36,15 @@ function plot_space(f, xmin,xmax, ymin,ymax, n;
       for j in 1:n
           z[j,i] = f([x[i],y[j]])[1]
       end
+  end
+
+  if con!=nothing
+    zcon = zeros(n,n)
+    for i in 1:n
+        for j in 1:n
+            zcon[j,i] = con([x[i],y[j]])[1]
+        end
+    end
   end
 
 
@@ -80,6 +89,10 @@ function plot_space(f, xmin,xmax, ymin,ymax, n;
   cp = ax2[:contour](xgrid, ygrid, z, 15,
                   colors="black", linewidth=2.0)
   ax2[:clabel](cp, inline=1, fontsize=10)
+  if con!=nothing
+    cp2 = ax2[:contour](xgrid, ygrid, zcon, 15, levels=[0.0],
+                  colors="red", linewidth=2.0)
+  end
   if Xs!=nothing
       ax2[:plot]([x[x_i] for x in Xs], [x[y_i] for x in Xs], "-ok")
   end
