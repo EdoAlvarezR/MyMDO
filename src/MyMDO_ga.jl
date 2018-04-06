@@ -14,14 +14,24 @@
   **Optional Arguments**
   * `mutP::Float64=0.05`    : Mutation probability.
   * `beta::Float64=2.0`     : Dynamic mutation parameter.
+  * `mutate_parents::Bool=false`    : If true, it will mutate parents along
+                                        with offspring.
+  * `save_gen::Any[]`       : Give it an empty array and it will push
+                              `[ppltn, ftnss]` on it at every generation.
+  * `scaling::Array{Float64,1}`     : If multiobjective, use this array to
+                                        define the scaling of each objective.
 
+NOTE: If the codomain of `f` is multidimensional, it switches automatically
+      to multibojective optimization evaluating fitness in a maximin criteria
+      and building a pareto front.
 """
 function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
                               xu::Array{T,1} where {T<:Real},
                               npop::Int64, ngen::Int64;
                               mutP::Real=0.05, beta::Real=2.0,
                               mutate_parents::Bool=false,
-                              save_gen=nothing)
+                              save_gen=nothing,
+                              scaling=nothing)
 
   # Error cases
   if size(xl,1)!=size(xu,1)
@@ -43,6 +53,7 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
     end
   end
 
+  nfun = size(f((xl+xu)/2),1)       # Number of objective functions
   nvars = size(xl,1)                # Number of design variables
   ppltn = zeros(npop, nvars)        # Population (ppltn[i,j] j-th variable value of i-th candidate)
   ftnss = nothing                   # Fitness of candidates in increasing order
@@ -53,11 +64,13 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
   this_ppltn = zeros(2*npop, nvars) # Total population at current generation
   this_ftnss = zeros(2*npop)        # Fitness of total population
 
+  multiobjective = nfun!=1
+
   # Initial population
   for i in 1:npop
     ppltn[i,:] = xl + (xu-xl).*rand(nvars)
   end
-  ftnss = _eval_f(f, ppltn)         # Current fitness
+  ftnss = _eval_f(f, nfun, ppltn; scaling=scaling)   # Current fitness
 
   if save_gen!=nothing; push!(save_gen, deepcopy.([ppltn, ftnss])); end;
 
@@ -121,10 +134,11 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
 
     # Evaluates fitness
     if mutate_parents
-      this_ftnss = _eval_f(f, this_ppltn)
+      this_ftnss = _eval_f(f, nfun, this_ppltn; scaling=scaling)
     else
       this_ftnss = ftnss
-      this_ftnss = vcat(ftnss, _eval_f(f, this_ppltn; imin=npop+1))
+      this_ftnss = vcat(ftnss, _eval_f(f, nfun, this_ppltn;
+                                                imin=npop+1, scaling=scaling))
       sort!(this_ftnss, by=x -> x[1])
     end
 
@@ -148,14 +162,64 @@ end
   Evaluates the fitness of a population and returns the array of elements
 `ftnss[i]=[fval, p]` containing the i-th best fitness `fval` of the total
 population, corresponding to the p-th candidate. `ftnss` is ordered in
-increasing order according to `fval`.
+increasing order according to `fval`. If single objective, `fval` is the
+objective function; if multiobjective, `fval` is the maximin dominance.
+If multiobjective, scaling factors for each objective can be given through
+`scaling`.
 """
-function _eval_f(f, ppltn::Array{T,2} where {T<:Real}; imin::Int64=1)
+function _eval_f(f, nfun::Int64, ppltn::Array{T,2} where {T<:Real};
+                                                imin::Int64=1, scaling=nothing)
+  npop = size(ppltn, 1)
+  effnpop = npop-(imin-1)
 
-  # Evaluates fitness value
-  ftnss = [Any[f(ppltn[i, :]), i] for i in imin:size(ppltn,1)]
+  if scaling!=nothing && nfun!=1 && size(scaling,1)!=nfun
+    error("Expected $nfun scaling factors; got $(size(scaling,1)).")
+  end
 
-  # Sorts fitness in decreasing order
+  # ------- Evaluates fitness value --------------------------
+  # Case of single objective: Fitness is the objective function
+  if nfun==1
+    ftnss = [ Any[ f(ppltn[i, :]), i ] for i in imin:npop ]
+
+  # Case of multiojbective: Fitness is the maximin dominance function
+  else
+
+    if scaling==nothing
+      _s = ones(nfun)
+    else
+      _s = scaling
+    end
+
+    # Evaluates objectives
+    fvals = [ Any[ _s.*f(ppltn[i, :]), i ] for i in imin:npop ]
+
+    # Dominance matrix: dominance[i,j] = min(f(xi)-f(xj)), j dominates i if >=0
+    dominance = zeros(effnpop, effnpop)
+
+    for i in 1:effnpop
+      for j in i:effnpop
+
+        if i==j
+          dominance[i,j] = -Inf
+
+        else # Dominance criteria min(f(xi)-f(xj))
+          fdiff = fvals[i][1] - fvals[j][1]
+          mindiff = minimum(fdiff)
+          maxdiff = maximum(fdiff)
+          dominance[i,j] = mindiff
+          dominance[j,i] = -maxdiff
+
+        end
+
+      end
+    end
+
+    # Makes the maximum dominance the fitness value
+    ftnss = [ Any[ maximum(dominance[i,:]), fvals[i][2] ] for i in 1:effnpop ]
+
+  end
+
+  # Sorts fitness in increasing order
   sort!(ftnss, by=x -> x[1])
 
   return ftnss

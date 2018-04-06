@@ -286,3 +286,107 @@ function design_space_animation(save_path::String, run_name::String,
 
   if verbose; println("\tDone plotting"); end;
 end
+
+
+"Plots the pareto front on the population `ppltn` of a multiobjective function
+`f`"
+function plot_multiobjective(f, ppltn; f_x=1, f_y=2, f_z=3, labels=true, rnd=2,
+                                scaling=nothing,
+                                title_str="Multiobjective population fitness")
+  nfun = size(f(ppltn[1,:]), 1)        # Number of objectives
+  npop = size(ppltn, 1)                # Population size
+
+  _labels = ("abcdefghijklmnopqrstuvwxyz"^Int(ceil(npop/27 + 1)))[1:npop]
+
+  if scaling!=nothing
+    _s = scaling
+  else
+    _s = ones(nfun)
+  end
+
+  fig = figure("pareto")
+
+  if nfun<=1
+    error("Invalid multiobjective function of dimensions $nfun")
+  elseif nfun==2
+    title(title_str)
+    xlabel("$(scaling!=nothing ? "Scaled " : "")f$f_x")
+    ylabel("$(scaling!=nothing ? "Scaled " : "")f$f_y")
+    grid(true, color="0.8", linestyle="--")
+
+    # Evaluates fitness
+    ftnss = _eval_f(f, nfun, ppltn; scaling=scaling)
+
+    # Builds the pareto front
+    pareto = [ this_ftnss for this_ftnss in ftnss if this_ftnss[1]<=0]
+
+    # Evaluates function
+    fvals = [_s.*f(ppltn[i,:]) for i in 1:npop]
+
+    minftnss = minimum([val[1] for val in ftnss])
+    maxftnss = maximum([val[1] for val in ftnss])
+    xmax, xmin = -Inf, Inf
+    ymax, ymin = -Inf, Inf
+
+    # Plots the population colored by fitness
+    for (ftnssval, ind) in ftnss
+        clr = (maxftnss - ftnssval)/(maxftnss - minftnss)
+        xval = fvals[ind][f_x]
+        yval = fvals[ind][f_y]
+        scatter([xval], [yval], c=[[clr,0,0]],
+                                label="$(_labels[ind]) -> $(round(ftnssval,rnd)) ")
+
+        if xval>xmax; xmax=xval; end;
+        if xval<xmin; xmin=xval; end;
+        if yval>ymax; ymax=yval; end;
+        if yval<ymin; ymin=yval; end;
+    end
+    if labels
+      x_disp = (xmax-xmin)*0.01
+      y_disp = (ymax-ymin)*0.01
+      disp = [x_disp, y_disp]
+      for i in 1:npop
+        annotate("$(_labels[i])=$(round.(ppltn[i,:], rnd))",
+                                          xy=[fvals[i][f_x],fvals[i][f_y]]+disp)
+      end
+      legend(loc="best")
+    end
+
+    # Plots the pareto front
+    prt_fvals = [[fvals[ind][f_x], fvals[ind][f_y]] for (ftnssval, ind) in pareto]
+    sort!(prt_fvals, by=x -> x[1])
+    prt_x = [val[1] for val in prt_fvals]
+    prt_y = [val[2] for val in prt_fvals]
+
+    plot(prt_x, prt_y, "--k", label="Pareto Front")
+
+  else
+    nothing
+  end
+end
+
+function multiobjective_animation(save_path::String, run_name::String,
+                                f, saved_gens; verbose=true,
+                                first=1, last=-1, ext=".png",
+                                xlims=nothing, ylims=nothing,
+                                optargs...)
+
+  gens = saved_gens[first : (last==-1 ? size(saved_gens,1) : last ) ]
+
+  for (i, (ppltn, ftnss)) in enumerate(gens)
+    if verbose; println("Plotting iteration $i of $(size(_Xs,1))..."); end;
+
+    title_str = "Population fitness at generation #$i"
+    plot_multiobjective(f, ppltn; title_str=title_str, optargs...)
+
+    if xlim!=nothing; xlim(xlims); end;
+    if ylim!=nothing; ylim(ylims); end;
+
+    this_num = ( i<10 ? "000" : (i<100 ? "00" : (i<1000 ? "0" : "")) )*"$i"
+    tight_layout()
+    savefig(joinpath(save_path, run_name)*"."*this_num*ext)
+    clf()
+  end
+
+  if verbose; println("\tDone plotting"); end;
+end
