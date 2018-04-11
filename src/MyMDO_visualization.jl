@@ -292,9 +292,19 @@ end
 `f`"
 function plot_multiobjective(f, ppltn; f_x=1, f_y=2, f_z=3, labels=true, rnd=2,
                                 scaling=nothing,
-                                title_str="Multiobjective population fitness")
-  nfun = size(f(ppltn[1,:]), 1)        # Number of objectives
+                                title_str="Multiobjective population fitness",
+                                ftnss=nothing, fvals=nothing, dlegend=true,
+                                ylims=nothing, crv_label=nothing,
+                                plot_population=true, new_fig=true,
+                                annotate_num=1,
+                                title_y=nothing)
   npop = size(ppltn, 1)                # Population size
+
+  if fvals!=nothing
+    nfun = size(fvals[1],1)
+  else
+    nfun = size(f(ppltn[1,:]), 1)      # Number of objectives
+  end
 
   _labels = ("abcdefghijklmnopqrstuvwxyz"^Int(ceil(npop/27 + 1)))[1:npop]
 
@@ -304,37 +314,51 @@ function plot_multiobjective(f, ppltn; f_x=1, f_y=2, f_z=3, labels=true, rnd=2,
     _s = ones(nfun)
   end
 
-  fig = figure("pareto")
+  if new_fig; fig = figure("pareto"); end;
 
   if nfun<=1
     error("Invalid multiobjective function of dimensions $nfun")
   elseif nfun==2
-    title(title_str)
+    if title_y!=nothing
+      title(title_str, y=title_y)
+    else
+      title(title_str)
+    end
     xlabel("$(scaling!=nothing ? "Scaled " : "")f$f_x")
     ylabel("$(scaling!=nothing ? "Scaled " : "")f$f_y")
     grid(true, color="0.8", linestyle="--")
 
     # Evaluates fitness
-    ftnss = _eval_f(f, nfun, ppltn; scaling=scaling)
+    if ftnss!=nothing
+      _ftnss = ftnss
+    else
+      _ftnss = _eval_f(f, nfun, ppltn; scaling=scaling)
+    end
 
     # Builds the pareto front
-    pareto = [ this_ftnss for this_ftnss in ftnss if this_ftnss[1]<=0]
+    pareto = [ this_ftnss for this_ftnss in _ftnss if this_ftnss[1]<0]
 
     # Evaluates function
-    fvals = [_s.*f(ppltn[i,:]) for i in 1:npop]
+    if fvals!=nothing
+      _fvals = [_s.*fval for fval in fvals]
+    else
+      _fvals = [_s.*f(ppltn[i,:]) for i in 1:npop]
+    end
 
-    minftnss = minimum([val[1] for val in ftnss])
-    maxftnss = maximum([val[1] for val in ftnss])
+    minftnss = minimum([val[1] for val in _ftnss])
+    maxftnss = maximum([val[1] for val in _ftnss])
     xmax, xmin = -Inf, Inf
     ymax, ymin = -Inf, Inf
 
     # Plots the population colored by fitness
-    for (ftnssval, ind) in ftnss
+    for (ftnssval, ind) in _ftnss
         clr = (maxftnss - ftnssval)/(maxftnss - minftnss)
-        xval = fvals[ind][f_x]
-        yval = fvals[ind][f_y]
-        scatter([xval], [yval], c=[[clr,0,0]],
+        xval = _fvals[ind][f_x]
+        yval = _fvals[ind][f_y]
+        if plot_population
+          scatter([xval], [yval], c=[[clr,0,0]],
                                 label="$(_labels[ind]) -> $(round(ftnssval,rnd)) ")
+        end
 
         if xval>xmax; xmax=xval; end;
         if xval<xmin; xmin=xval; end;
@@ -346,23 +370,39 @@ function plot_multiobjective(f, ppltn; f_x=1, f_y=2, f_z=3, labels=true, rnd=2,
       y_disp = (ymax-ymin)*0.01
       disp = [x_disp, y_disp]
       for i in 1:npop
-        annotate("$(_labels[i])=$(round.(ppltn[i,:], rnd))",
-                                          xy=[fvals[i][f_x],fvals[i][f_y]]+disp)
+        j = -1
+        if i in [prt[2] for prt in pareto]
+          j+=1
+          if j%annotate_num==0
+            annotate("$(_labels[i])=$(round.(ppltn[i,:], rnd))",
+                                        xy=[_fvals[i][f_x],_fvals[i][f_y]]+disp)
+          end
+        end
       end
-      legend(loc="best")
+      if dlegend*labels; legend(loc="best"); end;
     end
 
     # Plots the pareto front
-    prt_fvals = [[fvals[ind][f_x], fvals[ind][f_y]] for (ftnssval, ind) in pareto]
+    prt_fvals = [[_fvals[ind][f_x], _fvals[ind][f_y]] for (ftnssval, ind) in pareto]
     sort!(prt_fvals, by=x -> x[1])
     prt_x = [val[1] for val in prt_fvals]
     prt_y = [val[2] for val in prt_fvals]
 
-    plot(prt_x, prt_y, "--k", label="Pareto Front")
+
+    if crv_label!=nothing
+      # annotate(crv_label, xy=[xmax,ymin]-[20,40].*disp, size=20)
+      plot(prt_x, prt_y, "--o", label=crv_label)
+    else
+      plot(prt_x, prt_y, "--k", label="Pareto Front")
+    end
+
+    if ylims=="maxmin"; ylim([ymin, ymax]); end;
 
   else
-    nothing
+    pareto = nothing
   end
+
+  return pareto
 end
 
 function multiobjective_animation(save_path::String, run_name::String,
@@ -374,7 +414,7 @@ function multiobjective_animation(save_path::String, run_name::String,
   gens = saved_gens[first : (last==-1 ? size(saved_gens,1) : last ) ]
 
   for (i, (ppltn, ftnss)) in enumerate(gens)
-    if verbose; println("Plotting iteration $i of $(size(_Xs,1))..."); end;
+    if verbose; println("Plotting iteration $i of $(size(saved_gens,1))..."); end;
 
     title_str = "Population fitness at generation #$i"
     plot_multiobjective(f, ppltn; title_str=title_str, optargs...)

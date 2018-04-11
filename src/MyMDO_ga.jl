@@ -31,7 +31,9 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
                               mutP::Real=0.05, beta::Real=2.0,
                               mutate_parents::Bool=false,
                               save_gen=nothing,
-                              scaling=nothing)
+                              scaling=nothing,
+                              verbose::Bool=false, v_lvl::Int64=0,
+                              graph::Bool=true, init_meth="grid")
 
   # Error cases
   if size(xl,1)!=size(xu,1)
@@ -67,16 +69,39 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
   multiobjective = nfun!=1
 
   # Initial population
-  for i in 1:npop
-    ppltn[i,:] = xl + (xu-xl).*rand(nvars)
-  end
-  ftnss = _eval_f(f, nfun, ppltn; scaling=scaling)   # Current fitness
+  if init_meth=="random"
+    for i in 1:npop
+      ppltn[i,:] = xl + (xu-xl).*rand(nvars)
+    end
 
-  if save_gen!=nothing; push!(save_gen, deepcopy.([ppltn, ftnss])); end;
+  elseif init_meth=="grid"
+    if npop<2^nvars
+      error("Grid initiation method requires a population size of at"*
+            " least $(2^nvars); got $npop.")
+    end
+    nsecs = Int(floor(npop^(1/nvars)))
+    secs = collect(linspace(0,1,nsecs))
+    for i in 1:npop
+      if i<=nsecs^nvars
+        subs = ind2sub( Tuple([nsecs for j in 1:nvars]), i)
+        ppltn[i,:] = xl + (xu-xl).*[secs[sub] for sub in subs]
+      else
+        ppltn[i,:] = xl + (xu-xl).*rand(nvars)
+      end
+    end
+
+  else
+      error("Invalid initiation method $init_meth")
+  end
+  fvals = save_gen!=nothing ? [] : nothing
+  ftnss = _eval_f(f, nfun, ppltn; scaling=scaling, save_f=fvals) # Current fitness
+
+  if save_gen!=nothing; push!(save_gen, deepcopy.([ppltn, ftnss, fvals])); end;
 
 
   # Iterates over generations
   for gen in 1:ngen-1
+    if verbose; println("\t"^v_lvl*"Generation #$gen"); end;
 
     # Performs two tournament selections to define mating pool
     mate_i = 1
@@ -133,23 +158,35 @@ function genetic_algorithm(f, xl::Array{T,1} where {T<:Real},
     end
 
     # Evaluates fitness
-    if mutate_parents
-      this_ftnss = _eval_f(f, nfun, this_ppltn; scaling=scaling)
+    this_fvals = save_gen!=nothing ? [] : nothing
+    if mutate_parents || nfun>1
+      this_ftnss = _eval_f(f, nfun, this_ppltn; scaling=scaling, save_f=this_fvals)
     else
       this_ftnss = ftnss
       this_ftnss = vcat(ftnss, _eval_f(f, nfun, this_ppltn;
-                                                imin=npop+1, scaling=scaling))
+                              imin=npop+1, scaling=scaling, save_f=this_fvals))
       sort!(this_ftnss, by=x -> x[1])
+
+      if save_gen!=nothing; this_fvals = vcat(deepcopy.(fvals), this_fvals); end;
     end
 
     # Elitism selection
     ftnss = this_ftnss[1:npop]
-    for (i,(fval, p)) in enumerate(ftnss)
+    for (i,(fval, p)) in enumerate(deepcopy.(ftnss))
       ppltn[i, :] = this_ppltn[p, :]
       ftnss[i][2] = i
+
+      if save_gen!=nothing; fvals[i] = this_fvals[p]; end;
     end
 
-    if save_gen!=nothing; push!(save_gen, deepcopy.([ppltn, ftnss])); end;
+    if save_gen!=nothing; push!(save_gen, deepcopy.([ppltn, ftnss, fvals])); end;
+
+    if graph && nfun>1
+      if gen!=1; clf(); end;
+      plot_multiobjective(f, ppltn; labels=true, scaling=scaling,
+                                    title_str="Population Generation #$(gen+1)",
+                                    ftnss=ftnss, fvals=fvals, dlegend=false)
+    end
   end
 
   xopt = ppltn[ftnss[1][2], :]
@@ -168,7 +205,8 @@ If multiobjective, scaling factors for each objective can be given through
 `scaling`.
 """
 function _eval_f(f, nfun::Int64, ppltn::Array{T,2} where {T<:Real};
-                                                imin::Int64=1, scaling=nothing)
+                                                imin::Int64=1, scaling=nothing,
+                                                save_f=nothing)
   npop = size(ppltn, 1)
   effnpop = npop-(imin-1)
 
@@ -191,7 +229,11 @@ function _eval_f(f, nfun::Int64, ppltn::Array{T,2} where {T<:Real};
     end
 
     # Evaluates objectives
-    fvals = [ Any[ _s.*f(ppltn[i, :]), i ] for i in imin:npop ]
+    fvals = [ Any[ f(ppltn[i, :]), i ] for i in imin:npop ]
+
+    if save_f!=nothing; for fval in fvals; push!(save_f, fval[1]); end; end;
+
+    scld_fvals = [ Any[ _s.*fval, i] for (fval,i) in fvals]
 
     # Dominance matrix: dominance[i,j] = min(f(xi)-f(xj)), j dominates i if >=0
     dominance = zeros(effnpop, effnpop)
@@ -203,7 +245,7 @@ function _eval_f(f, nfun::Int64, ppltn::Array{T,2} where {T<:Real};
           dominance[i,j] = -Inf
 
         else # Dominance criteria min(f(xi)-f(xj))
-          fdiff = fvals[i][1] - fvals[j][1]
+          fdiff = scld_fvals[i][1] - scld_fvals[j][1]
           mindiff = minimum(fdiff)
           maxdiff = maximum(fdiff)
           dominance[i,j] = mindiff
@@ -215,7 +257,8 @@ function _eval_f(f, nfun::Int64, ppltn::Array{T,2} where {T<:Real};
     end
 
     # Makes the maximum dominance the fitness value
-    ftnss = [ Any[ maximum(dominance[i,:]), fvals[i][2] ] for i in 1:effnpop ]
+    ftnss = [ Any[ maximum(dominance[i,:]), scld_fvals[i][2] ] for i in 1:effnpop ]
+    # ftnss = [ Any[ sign(val)*abs(val)^(1/2), ind] for (val,ind) in ftnss]
 
   end
 
